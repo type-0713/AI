@@ -1,0 +1,621 @@
+import { useEffect, useRef, useState } from "react";
+import { collection, doc, onSnapshot, setDoc } from "firebase/firestore";
+import { db } from "./firebase";
+
+type Sender = "user" | "bot";
+
+interface Message {
+  id: string;
+  text: string;
+  sender: Sender;
+}
+
+interface ChatItem {
+  id: string;
+  title: string;
+  lastMessage: string;
+  updatedAt: number;
+}
+
+interface ChatDocData {
+  title?: string;
+  lastMessage?: string;
+  updatedAt?: number;
+  createdAt?: number;
+  messages?: Message[];
+}
+
+interface GeminiResponse {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{ text?: string }>;
+    };
+  }>;
+}
+
+interface GeminiErrorResponse {
+  error?: {
+    message?: string;
+  };
+}
+
+interface LocalCache {
+  chatList: ChatItem[];
+  messagesMap: Record<string, Message[]>;
+  activeChatId: string | null;
+}
+
+const GEMINI_API_KEY =
+  (import.meta.env.VITE_GEMINI_API_KEY as string | undefined) ??
+  "AIzaSyBlF6VJEI8ALx6OKTzJs1wLt7gOGrABQDE";
+
+const MODEL_IDS = ["gemini-2.5-flash", "gemini-flash-latest"];
+const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+
+const RETRY_DELAY_MS = 1200;
+const REQUEST_TIMEOUT_MS = 30000;
+const LOCAL_CACHE_KEY = "chatbot_cache_v2";
+
+const toPreview = (text: string) => {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) {
+    return "Bo'sh xabar";
+  }
+  return cleaned.length > 50 ? `${cleaned.slice(0, 50)}...` : cleaned;
+};
+
+const chatTitleFromMessages = (messages: Message[]) => {
+  const firstUserMessage = messages.find((msg) => msg.sender === "user");
+  if (!firstUserMessage) {
+    return "New chat";
+  }
+  return toPreview(firstUserMessage.text);
+};
+
+const areMessagesEqual = (left: Message[], right: Message[]) => {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let i = 0; i < left.length; i += 1) {
+    if (
+      left[i].id !== right[i].id ||
+      left[i].text !== right[i].text ||
+      left[i].sender !== right[i].sender
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const normalizeMessages = (input: unknown): Message[] => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input.filter(
+    (msg): msg is Message =>
+      typeof msg === "object" &&
+      msg !== null &&
+      typeof (msg as Message).id === "string" &&
+      typeof (msg as Message).text === "string" &&
+      (((msg as Message).sender === "user") || (msg as Message).sender === "bot"),
+  );
+};
+
+const buildFallbackReply = (userText: string) =>
+  `Hozir API bilan ulanishda muammo bor, lekin savolingizni oldim:\n"${userText}"\n\nIltimos 10-20 soniyadan keyin yana yuboring.`;
+
+const fetchWithTimeout = async (url: string, init: RequestInit) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+const buildModelUrl = (modelId: string, includeQueryKey: boolean) => {
+  const url = new URL(`${API_BASE_URL}/${modelId}:generateContent`);
+  if (includeQueryKey) {
+    url.searchParams.set("key", GEMINI_API_KEY);
+  }
+  return url.toString();
+};
+
+export default function App() {
+  const [chatList, setChatList] = useState<ChatItem[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({});
+  const [input, setInput] = useState("");
+  const [pendingChats, setPendingChats] = useState<Record<string, boolean>>({});
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [statusText, setStatusText] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesMapRef = useRef<Record<string, Message[]>>({});
+  const activeChatPending = activeChatId ? Boolean(pendingChats[activeChatId]) : false;
+
+  useEffect(() => {
+    messagesMapRef.current = messagesMap;
+  }, [messagesMap]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LOCAL_CACHE_KEY);
+      if (!raw) {
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as LocalCache;
+      if (Array.isArray(parsed.chatList)) {
+        setChatList(parsed.chatList);
+      }
+
+      if (parsed.messagesMap && typeof parsed.messagesMap === "object") {
+        const nextMap: Record<string, Message[]> = {};
+        Object.entries(parsed.messagesMap).forEach(([chatId, list]) => {
+          nextMap[chatId] = normalizeMessages(list);
+        });
+        setMessagesMap(nextMap);
+      }
+
+      if (typeof parsed.activeChatId === "string" || parsed.activeChatId === null) {
+        setActiveChatId(parsed.activeChatId);
+        if (parsed.activeChatId && parsed.messagesMap?.[parsed.activeChatId]) {
+          setMessages(normalizeMessages(parsed.messagesMap[parsed.activeChatId]));
+        }
+      }
+    } catch {
+      localStorage.removeItem(LOCAL_CACHE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    const cache: LocalCache = {
+      chatList,
+      messagesMap,
+      activeChatId,
+    };
+    localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(cache));
+  }, [chatList, messagesMap, activeChatId]);
+
+  useEffect(() => {
+    const chatsRef = collection(db, "chats");
+
+    const unsubscribe = onSnapshot(
+      chatsRef,
+      (snapshot) => {
+        const nextList = snapshot.docs
+          .map((docSnap) => {
+            const data = docSnap.data() as ChatDocData;
+            const updatedAt =
+              typeof data.updatedAt === "number"
+                ? data.updatedAt
+                : typeof data.createdAt === "number"
+                  ? data.createdAt
+                  : 0;
+
+            return {
+              id: docSnap.id,
+              title: data.title || "New chat",
+              lastMessage: data.lastMessage || "",
+              updatedAt,
+            } as ChatItem;
+          })
+          .sort((a, b) => b.updatedAt - a.updatedAt);
+
+        setChatList(nextList);
+        setActiveChatId((prev) => {
+          if (prev && nextList.some((item) => item.id === prev)) {
+            return prev;
+          }
+          return nextList[0]?.id ?? prev ?? null;
+        });
+        setStatusText("");
+      },
+      () => {
+        setStatusText("Firebase ulanmagan. Chat lokal keshdan ishlayapti.");
+      },
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!activeChatId) {
+      setMessages([]);
+      return;
+    }
+
+    const cachedMessages = messagesMapRef.current[activeChatId];
+    if (cachedMessages) {
+      setMessages(cachedMessages);
+    }
+
+    const chatRef = doc(db, "chats", activeChatId);
+    const unsubscribe = onSnapshot(
+      chatRef,
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          return;
+        }
+
+        const data = snapshot.data() as ChatDocData;
+        const nextMessages = normalizeMessages(data.messages);
+        setMessages(nextMessages);
+        setMessagesMap((prev) => {
+          const current = prev[activeChatId] ?? [];
+          if (areMessagesEqual(current, nextMessages)) {
+            return prev;
+          }
+          return { ...prev, [activeChatId]: nextMessages };
+        });
+      },
+      () => {
+        // Keep local cache messages if firestore subscription fails.
+      },
+    );
+
+    return () => unsubscribe();
+  }, [activeChatId]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, activeChatPending]);
+
+  useEffect(() => {
+    if (!activeChatId) {
+      return;
+    }
+    setMessagesMap((prev) => {
+      const current = prev[activeChatId] ?? [];
+      if (areMessagesEqual(current, messages)) {
+        return prev;
+      }
+      return { ...prev, [activeChatId]: messages };
+    });
+  }, [activeChatId, messages]);
+
+  const updateLocalChatMeta = (chatId: string, nextMessages: Message[]) => {
+    const updatedAt = Date.now();
+    const title = chatTitleFromMessages(nextMessages);
+    const lastMessage = nextMessages.length > 0 ? toPreview(nextMessages[nextMessages.length - 1].text) : "";
+
+    setMessagesMap((prev) => ({ ...prev, [chatId]: nextMessages }));
+    setChatList((prev) => {
+      const without = prev.filter((item) => item.id !== chatId);
+      return [{ id: chatId, title, lastMessage, updatedAt }, ...without].sort((a, b) => b.updatedAt - a.updatedAt);
+    });
+  };
+
+  const persistChatBestEffort = async (chatId: string, nextMessages: Message[]) => {
+    const updatedAt = Date.now();
+
+    try {
+      await setDoc(
+        doc(db, "chats", chatId),
+        {
+          title: chatTitleFromMessages(nextMessages),
+          lastMessage: nextMessages.length > 0 ? toPreview(nextMessages[nextMessages.length - 1].text) : "",
+          updatedAt,
+          messages: nextMessages,
+        },
+        { merge: true },
+      );
+    } catch {
+      setStatusText("Firebasega saqlashda xato. Xabarlar lokal keshta saqlandi.");
+    }
+  };
+
+  const createChat = async () => {
+    const localId = crypto.randomUUID();
+    const now = Date.now();
+
+    setMessages([]);
+    setActiveChatId(localId);
+    setMessagesMap((prev) => ({ ...prev, [localId]: [] }));
+    setChatList((prev) => [{ id: localId, title: "New chat", lastMessage: "", updatedAt: now }, ...prev]);
+
+    try {
+      const chatRef = doc(collection(db, "chats"));
+      await setDoc(chatRef, {
+        title: "New chat",
+        lastMessage: "",
+        createdAt: now,
+        updatedAt: now,
+        messages: [],
+      });
+
+      setActiveChatId(chatRef.id);
+      setMessagesMap((prev) => {
+        const { [localId]: localDraftEntry, ...rest } = prev;
+        void localDraftEntry;
+        return { ...rest, [chatRef.id]: [] };
+      });
+      setChatList((prev) => {
+        const filtered = prev.filter((item) => item.id !== localId);
+        return [{ id: chatRef.id, title: "New chat", lastMessage: "", updatedAt: now }, ...filtered];
+      });
+      setStatusText("");
+      return chatRef.id;
+    } catch {
+      setStatusText("Firebasega yangi chat yozilmadi. Lokal chat yaratildi.");
+      return localId;
+    }
+  };
+
+  const getGeminiReply = async (userText: string) => {
+    let finalError = "AI javob qaytarmadi.";
+
+    for (let modelIndex = 0; modelIndex < MODEL_IDS.length; modelIndex += 1) {
+      const modelId = MODEL_IDS[modelIndex];
+      const requestVariants = [
+        {
+          label: "query",
+          url: buildModelUrl(modelId, true),
+          headers: { "Content-Type": "application/json" } as Record<string, string>,
+        },
+        {
+          label: "header",
+          url: buildModelUrl(modelId, false),
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": GEMINI_API_KEY,
+          } as Record<string, string>,
+        },
+      ];
+
+      for (const variant of requestVariants) {
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          let response: Response;
+          try {
+            response = await fetchWithTimeout(variant.url, {
+              method: "POST",
+              headers: variant.headers,
+              body: JSON.stringify({
+                contents: [
+                  {
+                    parts: [{ text: userText }],
+                  },
+                ],
+              }),
+            });
+          } catch (error) {
+            const message =
+              error instanceof Error && error.message
+                ? error.message
+                : "Network xato";
+            finalError = `[${modelId}/${variant.label}] ${message}`;
+            break;
+          }
+
+          if (response.ok) {
+            const data = (await response.json()) as GeminiResponse;
+            const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+            return text || "Javob olinmadi.";
+          }
+
+          let errMessage = finalError;
+          try {
+            const err = (await response.json()) as GeminiErrorResponse;
+            errMessage = err.error?.message || finalError;
+          } catch {
+            errMessage = `${response.status} ${response.statusText}`.trim();
+          }
+
+          finalError = `[${modelId}/${variant.label}] ${errMessage}`;
+          const isHighDemand =
+            response.status === 429 ||
+            response.status === 503 ||
+            errMessage.toLowerCase().includes("high demand");
+
+          if (!isHighDemand || attempt === 2) {
+            break;
+          }
+
+          await new Promise((resolve) => {
+            setTimeout(resolve, RETRY_DELAY_MS * attempt);
+          });
+        }
+      }
+    }
+
+    setStatusText(finalError);
+    return buildFallbackReply(userText);
+  };
+
+  const sendMessage = async () => {
+    if (!input.trim()) {
+      return;
+    }
+
+    const userText = input.trim();
+    let requestChatId: string | null = null;
+
+    try {
+      const chatId = activeChatId || (await createChat());
+      requestChatId = chatId;
+      if (pendingChats[chatId]) {
+        setStatusText("AI oldingi xabarga javob yozmoqda, biroz kuting.");
+        return;
+      }
+
+      setStatusText("");
+      setInput("");
+      setPendingChats((prev) => ({ ...prev, [chatId]: true }));
+      const baseMessages = activeChatId === chatId ? messages : messagesMap[chatId] ?? [];
+
+      const userMessage: Message = {
+        id: crypto.randomUUID(),
+        text: userText,
+        sender: "user",
+      };
+
+      const withUser = [...baseMessages, userMessage];
+      setActiveChatId(chatId);
+      setMessages(withUser);
+      updateLocalChatMeta(chatId, withUser);
+      void persistChatBestEffort(chatId, withUser);
+
+      const botText = await getGeminiReply(userText);
+      const botMessage: Message = {
+        id: crypto.randomUUID(),
+        text: botText,
+        sender: "bot",
+      };
+
+      const withBot = [...withUser, botMessage];
+      setMessages(withBot);
+      updateLocalChatMeta(chatId, withBot);
+      void persistChatBestEffort(chatId, withBot);
+    } catch (error) {
+      const errorText =
+        error instanceof Error && error.message
+          ? error.message
+          : "AI bilan bog'lanishda xato. Internet yoki API sozlamasini tekshiring.";
+
+      const botMessage: Message = {
+        id: crypto.randomUUID(),
+        text: errorText,
+        sender: "bot",
+      };
+
+      const chatId = requestChatId;
+      if (chatId) {
+        const withError = [...(messagesMap[chatId] ?? messages), botMessage];
+        setMessages(withError);
+        updateLocalChatMeta(chatId, withError);
+        void persistChatBestEffort(chatId, withError);
+      } else {
+        setMessages((prev) => [...prev, botMessage]);
+      }
+    } finally {
+      if (requestChatId) {
+        setPendingChats((prev) => ({ ...prev, [requestChatId as string]: false }));
+      }
+    }
+  };
+
+  const copyText = async (text: string, messageId: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedMessageId(messageId);
+      setTimeout(() => setCopiedMessageId(null), 1500);
+    } catch {
+      setStatusText("Nusxa olish uchun browser ruxsatini yoqing.");
+    }
+  };
+
+  return (
+    <div className="app-shell">
+      <aside className="chat-sidebar">
+        <div className="sidebar-header">
+          <h1>Chats</h1>
+          <button type="button" className="secondary-btn" onClick={() => void createChat()}>
+            New chat
+          </button>
+        </div>
+
+        <div className="chat-list">
+          {chatList.length === 0 ? (
+            <p className="sidebar-empty">Chatlar hozircha yo'q</p>
+          ) : (
+            chatList.map((chat) => (
+              <button
+                key={chat.id}
+                type="button"
+                className={`chat-list-item ${chat.id === activeChatId ? "active" : ""}`}
+                onClick={() => setActiveChatId(chat.id)}
+              >
+                <span className="chat-title">{chat.title}</span>
+                <span className="chat-preview">{chat.lastMessage || "Yangi chat"}</span>
+              </button>
+            ))
+          )}
+        </div>
+      </aside>
+
+      <section className="chat-layout">
+        <header className="chat-header">
+          <h2>AI Chat</h2>
+        </header>
+
+        <main className="chat-body">
+          {statusText && <div className="typing">{statusText}</div>}
+
+          {messages.length === 0 && (
+            <div className="empty-state">
+              <h2>Chat boshlang</h2>
+              <p>Istalgan tilda yozishingiz mumkin.</p>
+            </div>
+          )}
+
+          {messages.map((msg) => (
+            <div
+              key={msg.id}
+              className={`message-row ${msg.sender === "user" ? "message-right" : "message-left"}`}
+            >
+              <article className={`message ${msg.sender}`}>
+                <p>{msg.text}</p>
+                {msg.sender === "bot" && (
+                  <button
+                    type="button"
+                    className={`copy-icon-btn ${copiedMessageId === msg.id ? "copied" : ""}`}
+                    aria-label="Nusxa olish"
+                    title={copiedMessageId === msg.id ? "Nusxalandi" : "Nusxa olish"}
+                    onClick={() => void copyText(msg.text, msg.id)}
+                  >
+                    <span className="copy-icon" aria-hidden="true">
+                      <span className="copy-icon-back" />
+                      <span className="copy-icon-front" />
+                    </span>
+                  </button>
+                )}
+              </article>
+            </div>
+          ))}
+
+          {activeChatPending && <div className="typing">AI yozmoqda...</div>}
+          <div ref={messagesEndRef} />
+        </main>
+
+        <footer className="chat-input-wrap">
+          <textarea
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void sendMessage();
+              }
+            }}
+            placeholder="Xabar yozing..."
+            rows={2}
+          />
+          <button
+            type="button"
+            className={`send-icon-btn ${activeChatPending ? "pending" : ""}`}
+            onClick={() => void sendMessage()}
+            disabled={activeChatPending}
+            aria-label={activeChatPending ? "Yozishni kuting" : "Yuborish"}
+            title={activeChatPending ? "AI yozmoqda" : "Yuborish"}
+          >
+            {activeChatPending ? (
+              <span className="send-stop-icon" aria-hidden="true" />
+            ) : (
+              <span className="send-wave-icon" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+                <span />
+                <span />
+              </span>
+            )}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
