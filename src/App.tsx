@@ -527,12 +527,12 @@ export default function App() {
               aria-label="Sidebar yopish"
               title="Yopish"
             >
-              x
+              ×
             </button>
-            <button type="button" className="icon-ghost-btn" aria-label="Yangi yozish" title="Yangi yozish">
+            <button type="button" className="icon-ghost-btn mobile-only" aria-label="Yangi yozish" title="Yangi yozish">
               +
             </button>
-            <button type="button" className="icon-ghost-btn" aria-label="Menyu" title="Menyu">
+            <button type="button" className="icon-ghost-btn mobile-only" aria-label="Menyu" title="Menyu">
               ...
             </button>
           </div>
@@ -549,15 +549,6 @@ export default function App() {
           >
             New chat
           </button>
-          <button type="button" className="sidebar-action-btn">Images</button>
-          <button type="button" className="sidebar-action-btn">Apps</button>
-          <button type="button" className="sidebar-action-btn">Codex</button>
-        </div>
-
-        <p className="sidebar-section-title">Projects</p>
-        <div className="sidebar-actions compact">
-          <button type="button" className="sidebar-action-btn">New project</button>
-          <button type="button" className="sidebar-action-btn">Since</button>
         </div>
 
         <p className="sidebar-section-title">Your chats</p>
