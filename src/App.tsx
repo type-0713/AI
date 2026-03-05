@@ -70,7 +70,7 @@ const RETRY_DELAY_MS = 1200;
 const REQUEST_TIMEOUT_MS = 30000;
 const LOCAL_CACHE_KEY = "chatbot_cache_v2";
 const ASSISTANT_INSTRUCTION =
-  "Siz yordamchi AI'siz. Har doim o'zbek tilida javob bering. Inson bilan tabiiy, muloyim va tushunarli suhbat qiling. Savol ilmiy bo'lsa ilmiy aniqlikda, oddiy bo'lsa sodda tarzda tushuntiring. Foydalanuvchi niyatini kontekstdan tushunib, eng mos javob bering.";
+  "Siz yordamchi AI'siz. Har doim adabiy o'zbek tilida, ravon va xatosiz yozing. Juda qisqa bo'lmang, lekin ortiqcha cho'zmang. Savolga aniq javob bering, keraksiz takrorlar va aralash til ishlatmang. Ilmiy savollarda aniq tushuntiring, oddiy savollarda sodda va tushunarli javob bering.";
 
 const toPreview = (text: string) => {
   const cleaned = text.replace(/\s+/g, " ").trim();
@@ -118,6 +118,14 @@ const normalizeMessages = (input: unknown): Message[] => {
       (((msg as Message).sender === "user") || (msg as Message).sender === "bot"),
   );
 };
+
+const cleanModelText = (input: string) =>
+  input
+    .replace(/\uFFFD/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
 
 const buildFallbackReply = (userText: string, reason: string) =>
   `Hozir API bilan ulanishda muammo bor, lekin savolingizni oldim:\n"${userText}"\n\nXato: ${reason}\n\nIltimos API key ruxsatlarini tekshiring yoki 10-20 soniyadan keyin qayta yuboring.`;
@@ -461,6 +469,11 @@ export default function App() {
                 system_instruction: {
                   parts: [{ text: ASSISTANT_INSTRUCTION }],
                 },
+                generationConfig: {
+                  temperature: 0.35,
+                  topP: 0.9,
+                  maxOutputTokens: 1024,
+                },
                 contents: [
                   {
                     parts: [{ text: userText }],
@@ -480,7 +493,7 @@ export default function App() {
           if (response.ok) {
             const data = (await response.json()) as GeminiResponse;
             const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-            return text || "Javob olinmadi.";
+            return text ? cleanModelText(text) : "Javob olinmadi.";
           }
 
           let errMessage = finalError;
