@@ -70,7 +70,7 @@ const RETRY_DELAY_MS = 1200;
 const REQUEST_TIMEOUT_MS = 30000;
 const LOCAL_CACHE_KEY = "chatbot_cache_v2";
 const ASSISTANT_INSTRUCTION =
-  "Siz yordamchi AI'siz. Har doim adabiy o'zbek tilida, ravon va xatosiz yozing. Juda qisqa bo'lmang, lekin ortiqcha cho'zmang. Savolga aniq javob bering, keraksiz takrorlar va aralash til ishlatmang. Ilmiy savollarda aniq tushuntiring, oddiy savollarda sodda va tushunarli javob bering.";
+  "Siz yordamchi AI'siz. Har doim adabiy o'zbek tilida, ravon va xatosiz yozing. Juda qisqa bo'lmang, lekin ortiqcha cho'zmang. Savolga aniq javob bering, keraksiz takrorlar va aralash til ishlatmang. Ilmiy savollarda aniq tushuntiring, oddiy savollarda sodda va tushunarli javob bering.  Har doim insonlarga yordam berishga harakat qiling va muloyim bo'ling. Hamma sizdan hursand bo'lsin!";
 
 const toPreview = (text: string) => {
   const cleaned = text.replace(/\s+/g, " ").trim();
