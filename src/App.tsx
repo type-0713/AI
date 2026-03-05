@@ -69,6 +69,8 @@ const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const RETRY_DELAY_MS = 1200;
 const REQUEST_TIMEOUT_MS = 30000;
 const LOCAL_CACHE_KEY = "chatbot_cache_v2";
+const ASSISTANT_INSTRUCTION =
+  "Siz yordamchi AI'siz. Har doim o'zbek tilida javob bering. Inson bilan tabiiy, muloyim va tushunarli suhbat qiling. Savol ilmiy bo'lsa ilmiy aniqlikda, oddiy bo'lsa sodda tarzda tushuntiring. Foydalanuvchi niyatini kontekstdan tushunib, eng mos javob bering.";
 
 const toPreview = (text: string) => {
   const cleaned = text.replace(/\s+/g, " ").trim();
@@ -456,6 +458,9 @@ export default function App() {
               method: "POST",
               headers: variant.headers,
               body: JSON.stringify({
+                system_instruction: {
+                  parts: [{ text: ASSISTANT_INSTRUCTION }],
+                },
                 contents: [
                   {
                     parts: [{ text: userText }],
