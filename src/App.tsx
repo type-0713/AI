@@ -133,6 +133,7 @@ export default function App() {
   const [pendingChats, setPendingChats] = useState<Record<string, boolean>>({});
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [statusText, setStatusText] = useState("");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesMapRef = useRef<Record<string, Message[]>>({});
   const activeChatPending = activeChatId ? Boolean(pendingChats[activeChatId]) : false;
@@ -509,15 +510,37 @@ export default function App() {
   };
 
   return (
-    <div className="app-shell">
-      <aside className="chat-sidebar">
-        <div className="sidebar-header">
-          <h1>Chats</h1>
-          <button type="button" className="secondary-btn" onClick={() => void createChat()}>
-            New chat
+    <div className={`app-shell ${isSidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
+      <aside className={`chat-sidebar ${isSidebarOpen ? "open" : "closed"}`}>
+        <div className="sidebar-top">
+          <img src="/favicon.png" alt="AI" className="sidebar-logo" />
+          <button
+            type="button"
+            className="icon-ghost-btn mobile-only"
+            onClick={() => setIsSidebarOpen(false)}
+            aria-label="Sidebar yopish"
+            title="Yopish"
+          >
+            x
           </button>
         </div>
 
+        <div className="sidebar-actions">
+          <button type="button" className="sidebar-action-btn" onClick={() => void createChat()}>
+            New chat
+          </button>
+          <button type="button" className="sidebar-action-btn">Images</button>
+          <button type="button" className="sidebar-action-btn">Apps</button>
+          <button type="button" className="sidebar-action-btn">Codex</button>
+        </div>
+
+        <p className="sidebar-section-title">Projects</p>
+        <div className="sidebar-actions compact">
+          <button type="button" className="sidebar-action-btn">New project</button>
+          <button type="button" className="sidebar-action-btn">Since</button>
+        </div>
+
+        <p className="sidebar-section-title">Your chats</p>
         <div className="chat-list">
           {chatList.length === 0 ? (
             <p className="sidebar-empty">Chatlar hozircha yo'q</p>
@@ -539,6 +562,15 @@ export default function App() {
 
       <section className="chat-layout">
         <header className="chat-header">
+          <button
+            type="button"
+            className="icon-ghost-btn mobile-only"
+            onClick={() => setIsSidebarOpen(true)}
+            aria-label="Sidebar ochish"
+            title="Menyu"
+          >
+            =
+          </button>
           <h2>AI Chat</h2>
         </header>
 
