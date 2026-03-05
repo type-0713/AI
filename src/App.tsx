@@ -137,6 +137,11 @@ export default function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesMapRef = useRef<Record<string, Message[]>>({});
   const activeChatPending = activeChatId ? Boolean(pendingChats[activeChatId]) : false;
+  const closeSidebarOnMobile = () => {
+    if (window.matchMedia("(max-width: 900px)").matches) {
+      setIsSidebarOpen(false);
+    }
+  };
 
   useEffect(() => {
     messagesMapRef.current = messagesMap;
@@ -514,19 +519,34 @@ export default function App() {
       <aside className={`chat-sidebar ${isSidebarOpen ? "open" : "closed"}`}>
         <div className="sidebar-top">
           <img src="/favicon.png" alt="AI" className="sidebar-logo" />
-          <button
-            type="button"
-            className="icon-ghost-btn mobile-only"
-            onClick={() => setIsSidebarOpen(false)}
-            aria-label="Sidebar yopish"
-            title="Yopish"
-          >
-            x
-          </button>
+          <div className="sidebar-top-actions">
+            <button
+              type="button"
+              className="icon-ghost-btn mobile-only"
+              onClick={() => setIsSidebarOpen(false)}
+              aria-label="Sidebar yopish"
+              title="Yopish"
+            >
+              x
+            </button>
+            <button type="button" className="icon-ghost-btn" aria-label="Yangi yozish" title="Yangi yozish">
+              +
+            </button>
+            <button type="button" className="icon-ghost-btn" aria-label="Menyu" title="Menyu">
+              ...
+            </button>
+          </div>
         </div>
 
         <div className="sidebar-actions">
-          <button type="button" className="sidebar-action-btn" onClick={() => void createChat()}>
+          <button
+            type="button"
+            className="sidebar-action-btn"
+            onClick={() => {
+              void createChat();
+              closeSidebarOnMobile();
+            }}
+          >
             New chat
           </button>
           <button type="button" className="sidebar-action-btn">Images</button>
@@ -550,7 +570,10 @@ export default function App() {
                 key={chat.id}
                 type="button"
                 className={`chat-list-item ${chat.id === activeChatId ? "active" : ""}`}
-                onClick={() => setActiveChatId(chat.id)}
+                onClick={() => {
+                  setActiveChatId(chat.id);
+                  closeSidebarOnMobile();
+                }}
               >
                 <span className="chat-title">{chat.title}</span>
                 <span className="chat-preview">{chat.lastMessage || "Yangi chat"}</span>
@@ -559,6 +582,12 @@ export default function App() {
           )}
         </div>
       </aside>
+      <button
+        type="button"
+        className={`sidebar-overlay mobile-only ${isSidebarOpen ? "show" : ""}`}
+        onClick={() => setIsSidebarOpen(false)}
+        aria-label="Sidebar yopish"
+      />
 
       <section className="chat-layout">
         <header className="chat-header">
