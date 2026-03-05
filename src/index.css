@@ -353,9 +353,9 @@ body {
 
 .chat-input-wrap textarea {
   width: 100%;
-  resize: vertical;
-  min-height: 56px;
-  max-height: 180px;
+  resize: none;
+  min-height: 52px;
+  max-height: 120px;
   border-radius: 12px;
   border: 1px solid rgba(124, 146, 207, 0.36);
   background: var(--panel-strong);
@@ -643,9 +643,8 @@ body {
 
   .chat-input-wrap textarea {
     min-height: 46px;
-    max-height: 92px;
+    max-height: 100px;
     padding: 10px 11px;
-    resize: none;
   }
 
   .send-icon-btn {

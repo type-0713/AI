@@ -39,6 +39,15 @@ interface GeminiErrorResponse {
   };
 }
 
+interface GeminiModelItem {
+  name?: string;
+  supportedGenerationMethods?: string[];
+}
+
+interface GeminiModelsResponse {
+  models?: GeminiModelItem[];
+}
+
 interface LocalCache {
   chatList: ChatItem[];
   messagesMap: Record<string, Message[]>;
@@ -47,9 +56,14 @@ interface LocalCache {
 
 const GEMINI_API_KEY =
   (import.meta.env.VITE_GEMINI_API_KEY as string | undefined) ??
-  "AIzaSyBlF6VJEI8ALx6OKTzJs1wLt7gOGrABQDE";
+  "AIzaSyA6Y9IStqA6SnkGCx1UV3m_WrSFkYAlqtY";
 
-const MODEL_IDS = ["gemini-2.5-flash", "gemini-flash-latest"];
+const MODEL_IDS = [
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-1.5-flash",
+  "gemini-flash-latest",
+];
 const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
 const RETRY_DELAY_MS = 1200;
@@ -103,8 +117,8 @@ const normalizeMessages = (input: unknown): Message[] => {
   );
 };
 
-const buildFallbackReply = (userText: string) =>
-  `Hozir API bilan ulanishda muammo bor, lekin savolingizni oldim:\n"${userText}"\n\nIltimos 10-20 soniyadan keyin yana yuboring.`;
+const buildFallbackReply = (userText: string, reason: string) =>
+  `Hozir API bilan ulanishda muammo bor, lekin savolingizni oldim:\n"${userText}"\n\nXato: ${reason}\n\nIltimos API key ruxsatlarini tekshiring yoki 10-20 soniyadan keyin qayta yuboring.`;
 
 const fetchWithTimeout = async (url: string, init: RequestInit) => {
   const controller = new AbortController();
@@ -122,6 +136,66 @@ const buildModelUrl = (modelId: string, includeQueryKey: boolean) => {
     url.searchParams.set("key", GEMINI_API_KEY);
   }
   return url.toString();
+};
+
+const buildListModelsUrl = (includeQueryKey: boolean) => {
+  const url = new URL(API_BASE_URL);
+  if (includeQueryKey) {
+    url.searchParams.set("key", GEMINI_API_KEY);
+  }
+  return url.toString();
+};
+
+let cachedModelIds: string[] | null = null;
+
+const getRuntimeModelIds = async () => {
+  if (cachedModelIds) {
+    return cachedModelIds;
+  }
+
+  const variants = [
+    {
+      url: buildListModelsUrl(true),
+      headers: { "Content-Type": "application/json" } as Record<string, string>,
+    },
+    {
+      url: buildListModelsUrl(false),
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": GEMINI_API_KEY,
+      } as Record<string, string>,
+    },
+  ];
+
+  for (const variant of variants) {
+    try {
+      const response = await fetchWithTimeout(variant.url, {
+        method: "GET",
+        headers: variant.headers,
+      });
+
+      if (!response.ok) {
+        continue;
+      }
+
+      const data = (await response.json()) as GeminiModelsResponse;
+      const supported = (data.models || [])
+        .filter((model) => (model.supportedGenerationMethods || []).includes("generateContent"))
+        .map((model) => model.name?.replace("models/", ""))
+        .filter((name): name is string => Boolean(name));
+
+      if (supported.length > 0) {
+        const preferred = MODEL_IDS.filter((id) => supported.includes(id));
+        cachedModelIds = preferred.length > 0 ? preferred : supported;
+        return cachedModelIds;
+      }
+    } catch {
+      // Continue with next variant.
+    }
+  }
+
+  cachedModelIds = MODEL_IDS;
+  return cachedModelIds;
 };
 
 export default function App() {
@@ -354,9 +428,10 @@ export default function App() {
 
   const getGeminiReply = async (userText: string) => {
     let finalError = "AI javob qaytarmadi.";
+    const runtimeModelIds = await getRuntimeModelIds();
 
-    for (let modelIndex = 0; modelIndex < MODEL_IDS.length; modelIndex += 1) {
-      const modelId = MODEL_IDS[modelIndex];
+    for (let modelIndex = 0; modelIndex < runtimeModelIds.length; modelIndex += 1) {
+      const modelId = runtimeModelIds[modelIndex];
       const requestVariants = [
         {
           label: "query",
@@ -429,7 +504,7 @@ export default function App() {
     }
 
     setStatusText(finalError);
-    return buildFallbackReply(userText);
+    return buildFallbackReply(userText, finalError);
   };
 
   const sendMessage = async () => {
@@ -529,12 +604,6 @@ export default function App() {
             >
               ×
             </button>
-            <button type="button" className="icon-ghost-btn mobile-only" aria-label="Yangi yozish" title="Yangi yozish">
-              +
-            </button>
-            <button type="button" className="icon-ghost-btn mobile-only" aria-label="Menyu" title="Menyu">
-              ...
-            </button>
           </div>
         </div>
 
@@ -573,12 +642,6 @@ export default function App() {
           )}
         </div>
       </aside>
-      <button
-        type="button"
-        className={`sidebar-overlay mobile-only ${isSidebarOpen ? "show" : ""}`}
-        onClick={() => setIsSidebarOpen(false)}
-        aria-label="Sidebar yopish"
-      />
 
       <section className="chat-layout">
         <header className="chat-header">
