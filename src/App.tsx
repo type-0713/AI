@@ -145,23 +145,15 @@ const getStoredGeminiApiKey = () => {
   return (window.localStorage.getItem(GEMINI_KEY_STORAGE_KEY) || "").trim();
 };
 
+const clearStoredGeminiApiKey = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.removeItem(GEMINI_KEY_STORAGE_KEY);
+};
+
 const getGeminiApiKey = () =>
   ((import.meta.env.VITE_GEMINI_API_KEY as string | undefined) || getStoredGeminiApiKey()).trim();
-
-const requestGeminiApiKey = () => {
-  if (typeof window === "undefined") {
-    return "";
-  }
-
-  const entered = window.prompt(
-    "Gemini API key kiriting (bir marta saqlanadi). .env ishlatmoqchi bo'lsangiz VITE_GEMINI_API_KEY ni sozlang.",
-  );
-  const key = (entered || "").trim();
-  if (key) {
-    window.localStorage.setItem(GEMINI_KEY_STORAGE_KEY, key);
-  }
-  return key;
-};
 
 const buildModelUrl = (modelId: string, includeQueryKey: boolean, apiKey: string) => {
   const url = new URL(`${API_BASE_URL}/${modelId}:generateContent`);
@@ -464,14 +456,11 @@ export default function App() {
   };
 
   const getGeminiReply = async (userText: string) => {
-    let apiKey = getGeminiApiKey();
-    if (!apiKey) {
-      apiKey = requestGeminiApiKey();
-    }
+    const apiKey = getGeminiApiKey();
 
     if (!apiKey) {
       const missingKeyReason =
-        "Gemini API key topilmadi (`VITE_GEMINI_API_KEY` yoki saqlangan local key yo'q).";
+        "Gemini API key topilmadi (`VITE_GEMINI_API_KEY` yoki localStorage: `gemini_api_key`).";
       setStatusText(missingKeyReason);
       return buildFallbackReply(userText, missingKeyReason);
     }
@@ -544,6 +533,9 @@ export default function App() {
           }
 
           const leakedKeyDetected = errMessage.toLowerCase().includes("reported as leaked");
+          if (leakedKeyDetected && !(import.meta.env.VITE_GEMINI_API_KEY as string | undefined)) {
+            clearStoredGeminiApiKey();
+          }
           finalError = leakedKeyDetected
             ? `[${modelId}/${variant.label}] API key oshkor bo'lgani uchun bloklangan. Yangi key yarating.`
             : `[${modelId}/${variant.label}] ${errMessage}`;
