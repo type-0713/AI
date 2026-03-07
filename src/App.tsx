@@ -532,13 +532,22 @@ export default function App() {
             errMessage = `${response.status} ${response.statusText}`.trim();
           }
 
-          const leakedKeyDetected = errMessage.toLowerCase().includes("reported as leaked");
-          if (leakedKeyDetected && !(import.meta.env.VITE_GEMINI_API_KEY as string | undefined)) {
-            clearStoredGeminiApiKey();
+          const lowerError = errMessage.toLowerCase();
+          const leakedKeyDetected =
+            lowerError.includes("reported as leaked") ||
+            lowerError.includes("api key not valid");
+          if (leakedKeyDetected) {
+            if (!(import.meta.env.VITE_GEMINI_API_KEY as string | undefined)) {
+              clearStoredGeminiApiKey();
+            }
+            finalError =
+              `[${modelId}/${variant.label}] API key yaroqsiz yoki bloklangan. ` +
+              "Yangi key yarating va `.env` ga `VITE_GEMINI_API_KEY=...` qilib qo'ying.";
+            setStatusText(finalError);
+            return buildFallbackReply(userText, finalError);
           }
-          finalError = leakedKeyDetected
-            ? `[${modelId}/${variant.label}] API key oshkor bo'lgani uchun bloklangan. Yangi key yarating.`
-            : `[${modelId}/${variant.label}] ${errMessage}`;
+
+          finalError = `[${modelId}/${variant.label}] ${errMessage}`;
           const isHighDemand =
             response.status === 429 ||
             response.status === 503 ||
