@@ -54,7 +54,7 @@ interface LocalCache {
   activeChatId: string | null;
 }
 
-const GEMINI_KEY_STORAGE_KEY = "AIzaSyA6Y9IStqA6SnkGCx1UV3m_WrSFkYAlqtY";
+const GEMINI_KEY_STORAGE_KEY = "gemini_api_key";
 
 const MODEL_IDS = [
   "gemini-2.5-flash",
