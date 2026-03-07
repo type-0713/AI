@@ -240,6 +240,7 @@ export default function App() {
   const [statusText, setStatusText] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [apiKeyInput, setApiKeyInput] = useState("");
+  const [apiKeyToPersist, setApiKeyToPersist] = useState<string | null>(null);
   const [hasStoredApiKey, setHasStoredApiKey] = useState(Boolean(getStoredGeminiApiKey()));
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesMapRef = useRef<Record<string, Message[]>>({});
@@ -259,6 +260,16 @@ export default function App() {
       setHasStoredApiKey(Boolean(getStoredGeminiApiKey()));
     }
   }, []);
+
+  useEffect(() => {
+    if (!apiKeyToPersist) {
+      return;
+    }
+    window.localStorage.setItem(GEMINI_KEY_STORAGE_KEY, apiKeyToPersist);
+    setHasStoredApiKey(true);
+    setStatusText("API key saqlandi.");
+    setApiKeyToPersist(null);
+  }, [apiKeyToPersist]);
 
   useEffect(() => {
     try {
@@ -667,10 +678,8 @@ export default function App() {
       setStatusText("API key bo'sh bo'lmasin.");
       return;
     }
-    window.localStorage.setItem(GEMINI_KEY_STORAGE_KEY, key);
-    setHasStoredApiKey(true);
+    setApiKeyToPersist(key);
     setApiKeyInput("");
-    setStatusText("API key saqlandi.");
   };
 
   const clearApiKey = () => {
