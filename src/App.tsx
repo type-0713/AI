@@ -54,9 +54,7 @@ interface LocalCache {
   activeChatId: string | null;
 }
 
-const GEMINI_API_KEY =
-  (import.meta.env.VITE_GEMINI_API_KEY as string | undefined) ??
-  "AIzaSyA6Y9IStqA6SnkGCx1UV3m_WrSFkYAlqtY";
+const GEMINI_KEY_STORAGE_KEY = "AIzaSyA6Y9IStqA6SnkGCx1UV3m_WrSFkYAlqtY";
 
 const MODEL_IDS = [
   "gemini-2.5-flash",
@@ -140,39 +138,68 @@ const fetchWithTimeout = async (url: string, init: RequestInit) => {
   }
 };
 
-const buildModelUrl = (modelId: string, includeQueryKey: boolean) => {
+const getStoredGeminiApiKey = () => {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return (window.localStorage.getItem(GEMINI_KEY_STORAGE_KEY) || "").trim();
+};
+
+const getGeminiApiKey = () =>
+  ((import.meta.env.VITE_GEMINI_API_KEY as string | undefined) || getStoredGeminiApiKey()).trim();
+
+const requestGeminiApiKey = () => {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  const entered = window.prompt(
+    "Gemini API key kiriting (bir marta saqlanadi). .env ishlatmoqchi bo'lsangiz VITE_GEMINI_API_KEY ni sozlang.",
+  );
+  const key = (entered || "").trim();
+  if (key) {
+    window.localStorage.setItem(GEMINI_KEY_STORAGE_KEY, key);
+  }
+  return key;
+};
+
+const buildModelUrl = (modelId: string, includeQueryKey: boolean, apiKey: string) => {
   const url = new URL(`${API_BASE_URL}/${modelId}:generateContent`);
   if (includeQueryKey) {
-    url.searchParams.set("key", GEMINI_API_KEY);
+    url.searchParams.set("key", apiKey);
   }
   return url.toString();
 };
 
-const buildListModelsUrl = (includeQueryKey: boolean) => {
+const buildListModelsUrl = (includeQueryKey: boolean, apiKey: string) => {
   const url = new URL(API_BASE_URL);
   if (includeQueryKey) {
-    url.searchParams.set("key", GEMINI_API_KEY);
+    url.searchParams.set("key", apiKey);
   }
   return url.toString();
 };
 
-let cachedModelIds: string[] | null = null;
+const cachedModelIdsByKey: Record<string, string[]> = {};
 
-const getRuntimeModelIds = async () => {
-  if (cachedModelIds) {
-    return cachedModelIds;
+const getRuntimeModelIds = async (apiKey: string) => {
+  if (!apiKey) {
+    return MODEL_IDS;
+  }
+
+  if (cachedModelIdsByKey[apiKey]) {
+    return cachedModelIdsByKey[apiKey];
   }
 
   const variants = [
     {
-      url: buildListModelsUrl(true),
+      url: buildListModelsUrl(true, apiKey),
       headers: { "Content-Type": "application/json" } as Record<string, string>,
     },
     {
-      url: buildListModelsUrl(false),
+      url: buildListModelsUrl(false, apiKey),
       headers: {
         "Content-Type": "application/json",
-        "x-goog-api-key": GEMINI_API_KEY,
+        "x-goog-api-key": apiKey,
       } as Record<string, string>,
     },
   ];
@@ -196,16 +223,16 @@ const getRuntimeModelIds = async () => {
 
       if (supported.length > 0) {
         const preferred = MODEL_IDS.filter((id) => supported.includes(id));
-        cachedModelIds = preferred.length > 0 ? preferred : supported;
-        return cachedModelIds;
+        cachedModelIdsByKey[apiKey] = preferred.length > 0 ? preferred : supported;
+        return cachedModelIdsByKey[apiKey];
       }
     } catch {
       // Continue with next variant.
     }
   }
 
-  cachedModelIds = MODEL_IDS;
-  return cachedModelIds;
+  cachedModelIdsByKey[apiKey] = MODEL_IDS;
+  return cachedModelIdsByKey[apiKey];
 };
 
 export default function App() {
@@ -437,23 +464,35 @@ export default function App() {
   };
 
   const getGeminiReply = async (userText: string) => {
+    let apiKey = getGeminiApiKey();
+    if (!apiKey) {
+      apiKey = requestGeminiApiKey();
+    }
+
+    if (!apiKey) {
+      const missingKeyReason =
+        "Gemini API key topilmadi (`VITE_GEMINI_API_KEY` yoki saqlangan local key yo'q).";
+      setStatusText(missingKeyReason);
+      return buildFallbackReply(userText, missingKeyReason);
+    }
+
     let finalError = "AI javob qaytarmadi.";
-    const runtimeModelIds = await getRuntimeModelIds();
+    const runtimeModelIds = await getRuntimeModelIds(apiKey);
 
     for (let modelIndex = 0; modelIndex < runtimeModelIds.length; modelIndex += 1) {
       const modelId = runtimeModelIds[modelIndex];
       const requestVariants = [
         {
           label: "query",
-          url: buildModelUrl(modelId, true),
+          url: buildModelUrl(modelId, true, apiKey),
           headers: { "Content-Type": "application/json" } as Record<string, string>,
         },
         {
           label: "header",
-          url: buildModelUrl(modelId, false),
+          url: buildModelUrl(modelId, false, apiKey),
           headers: {
             "Content-Type": "application/json",
-            "x-goog-api-key": GEMINI_API_KEY,
+            "x-goog-api-key": apiKey,
           } as Record<string, string>,
         },
       ];
@@ -504,7 +543,10 @@ export default function App() {
             errMessage = `${response.status} ${response.statusText}`.trim();
           }
 
-          finalError = `[${modelId}/${variant.label}] ${errMessage}`;
+          const leakedKeyDetected = errMessage.toLowerCase().includes("reported as leaked");
+          finalError = leakedKeyDetected
+            ? `[${modelId}/${variant.label}] API key oshkor bo'lgani uchun bloklangan. Yangi key yarating.`
+            : `[${modelId}/${variant.label}] ${errMessage}`;
           const isHighDemand =
             response.status === 429 ||
             response.status === 503 ||
