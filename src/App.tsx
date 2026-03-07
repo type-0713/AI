@@ -256,7 +256,10 @@ export default function App() {
     if (!HAS_ENV_GEMINI_API_KEY) {
       return;
     }
-    window.localStorage.setItem(GEMINI_KEY_STORAGE_KEY, ENV_GEMINI_API_KEY);
+    const stored = getStoredGeminiApiKey();
+    if (stored !== ENV_GEMINI_API_KEY) {
+      window.localStorage.setItem(GEMINI_KEY_STORAGE_KEY, ENV_GEMINI_API_KEY);
+    }
   }, []);
 
   useEffect(() => {
