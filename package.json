@@ -7,9 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "genai:test": "node scripts/genai-test.mjs"
   },
   "dependencies": {
+    "@google/genai": "^1.44.0",
     "firebase": "^12.10.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
