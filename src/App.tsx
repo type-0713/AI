@@ -239,9 +239,6 @@ export default function App() {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [statusText, setStatusText] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [apiKeyInput, setApiKeyInput] = useState("");
-  const [apiKeyToPersist, setApiKeyToPersist] = useState<string | null>(null);
-  const [hasStoredApiKey, setHasStoredApiKey] = useState(Boolean(getStoredGeminiApiKey()));
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesMapRef = useRef<Record<string, Message[]>>({});
   const activeChatPending = activeChatId ? Boolean(pendingChats[activeChatId]) : false;
@@ -257,19 +254,10 @@ export default function App() {
 
   useEffect(() => {
     if (!HAS_ENV_GEMINI_API_KEY) {
-      setHasStoredApiKey(Boolean(getStoredGeminiApiKey()));
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!apiKeyToPersist) {
       return;
     }
-    window.localStorage.setItem(GEMINI_KEY_STORAGE_KEY, apiKeyToPersist);
-    setHasStoredApiKey(true);
-    setStatusText("API key saqlandi.");
-    setApiKeyToPersist(null);
-  }, [apiKeyToPersist]);
+    window.localStorage.setItem(GEMINI_KEY_STORAGE_KEY, ENV_GEMINI_API_KEY);
+  }, []);
 
   useEffect(() => {
     try {
@@ -560,7 +548,6 @@ export default function App() {
           if (leakedKeyDetected) {
             if (!HAS_ENV_GEMINI_API_KEY) {
               clearStoredGeminiApiKey();
-              setHasStoredApiKey(false);
             }
             finalError =
               `[${modelId}/${variant.label}] API key yaroqsiz yoki bloklangan. ` +
@@ -672,22 +659,6 @@ export default function App() {
     }
   };
 
-  const saveApiKey = () => {
-    const key = apiKeyInput.trim();
-    if (!key) {
-      setStatusText("API key bo'sh bo'lmasin.");
-      return;
-    }
-    setApiKeyToPersist(key);
-    setApiKeyInput("");
-  };
-
-  const clearApiKey = () => {
-    clearStoredGeminiApiKey();
-    setHasStoredApiKey(false);
-    setStatusText("Saqlangan API key o'chirildi.");
-  };
-
   return (
     <div className={`app-shell ${isSidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
       <aside className={`chat-sidebar ${isSidebarOpen ? "open" : "closed"}`}>
@@ -755,28 +726,6 @@ export default function App() {
           </button>
           <h2>AI Chat</h2>
         </header>
-
-        {!HAS_ENV_GEMINI_API_KEY && (
-          <div className="api-key-card">
-            <p className="api-key-title">Gemini API key</p>
-            <div className="api-key-row">
-              <input
-                type="password"
-                value={apiKeyInput}
-                onChange={(event) => setApiKeyInput(event.target.value)}
-                placeholder={hasStoredApiKey ? "Yangi key bilan almashtiring" : "API key kiriting"}
-              />
-              <button type="button" className="secondary-btn" onClick={saveApiKey}>
-                Saqlash
-              </button>
-              {hasStoredApiKey && (
-                <button type="button" className="secondary-btn" onClick={clearApiKey}>
-                  O'chirish
-                </button>
-              )}
-            </div>
-          </div>
-        )}
 
         <main className="chat-body">
           {statusText && <div className="typing">{statusText}</div>}
